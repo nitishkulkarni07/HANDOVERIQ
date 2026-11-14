@@ -12,14 +12,52 @@ DB=os.getenv("HANDOVERIQ_DB","/tmp/handoveriq.sqlite3" if os.getenv("VERCEL") el
 if os.getenv("VERCEL") and not os.getenv("DEMO_PASSWORD"):
     raise RuntimeError("Set DEMO_PASSWORD in Vercel environment variables")
 
+# Supabase Postgres in production; local SQLite remains useful for development.
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if os.getenv("VERCEL") and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required on Vercel. Configure Supabase's transaction-pooler URI.")
+
+class PostgresDatabase:
+    def __init__(self, connection):
+        self.connection = connection
+    def execute(self, statement, parameters=()):
+        sql = statement.replace("?", "%s")
+        if sql.startswith("INSERT OR IGNORE INTO receipts"):
+            sql = sql.replace("INSERT OR IGNORE", "INSERT", 1) + " ON CONFLICT DO NOTHING"
+        if sql.startswith("INSERT INTO sources(") or sql.startswith("INSERT INTO handovers("):
+            sql += " RETURNING id"
+            row = self.connection.execute(sql, parameters).fetchone()
+            return type("InsertResult", (), {"lastrowid": row["id"]})()
+        return self.connection.execute(sql, parameters)
+    def commit(self):
+        self.connection.commit()
+    def close(self):
+        self.connection.close()
+
 @contextmanager
 def database():
-    db=sqlite3.connect(DB,timeout=10)
-    db.row_factory=sqlite3.Row
-    try:
-        yield db
-        db.commit()
-    finally: db.close()
+    if DATABASE_URL:
+        import psycopg
+        from psycopg.rows import dict_row
+        connection = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=8, prepare_threshold=None)
+        db = PostgresDatabase(connection)
+        try:
+            connection.execute("SET search_path TO handoveriq")
+            yield db
+            db.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            db.close()
+    else:
+        db = sqlite3.connect(DB,timeout=10)
+        db.row_factory = sqlite3.Row
+        try:
+            yield db
+            db.commit()
+        finally:
+            db.close()
 
 def hashpass(p,s=None):
     s=s or secrets.token_hex(12)
@@ -27,7 +65,8 @@ def hashpass(p,s=None):
 
 def init():
     with database() as db:
-        db.executescript("""
+        if not DATABASE_URL:
+            db.executescript("""
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,username TEXT UNIQUE,role TEXT,hash TEXT);
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,uid INTEGER);
 CREATE TABLE IF NOT EXISTS sources(id INTEGER PRIMARY KEY,name TEXT,body TEXT,visibility TEXT);
