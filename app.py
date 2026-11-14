@@ -179,7 +179,7 @@ async def add_source(file:UploadFile=File(...),visibility:str=Form("all"),user=D
     with database() as db:
         c=db.execute("INSERT INTO sources(name,body,visibility) VALUES(?,?,?)",(name,body[:150000],visibility))
         sid=c.lastrowid
-    return {"id":sid,"filename":name,"characters":len(body),"storage_warning":"Temporary SQLite on Vercel: this document can disappear between requests. Connect a persistent database for reliable handovers." if os.getenv("VERCEL") else None}
+    return {"id":sid,"filename":name,"characters":len(body),"storage_warning":"Temporary SQLite on Vercel: this document can disappear between requests. Connect a persistent database for reliable handovers." if os.getenv("VERCEL") and not DATABASE_URL else None}
 
 @app.delete("/api/sources/{sid}")
 def delete_source(sid:int,user=Depends(current)):
