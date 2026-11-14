@@ -142,7 +142,7 @@ async def add_source(file:UploadFile=File(...),visibility:str=Form("all"),user=D
     with database() as db:
         c=db.execute("INSERT INTO sources(name,body,visibility) VALUES(?,?,?)",(name,body[:150000],visibility))
         sid=c.lastrowid
-    return {"id":sid,"filename":name,"characters":len(body)}
+    return {"id":sid,"filename":name,"characters":len(body),"storage_warning":"Temporary SQLite on Vercel: this document can disappear between requests. Connect a persistent database for reliable handovers." if os.getenv("VERCEL") else None}
 
 @app.delete("/api/sources/{sid}")
 def delete_source(sid:int,user=Depends(current)):
@@ -168,36 +168,28 @@ def reconstruct(items):
     return claims[:100],gaps
 
 def gemini_request(prompt):
+    """One bounded Gemini request; fail quickly instead of retrying models for a minute."""
     key=os.getenv("GEMINI_API_KEY")
-    if not key:raise RuntimeError("Gemini API key is missing on Vercel")
-    # New Google AI Studio projects may not have generation access to Gemini 2.5.
+    if not key:raise RuntimeError("Gemini API key is missing from Vercel")
     model=os.getenv("GEMINI_MODEL","gemini-3.5-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+",model):
-        raise RuntimeError("Gemini model name is invalid")
-    candidates=list(dict.fromkeys([model,"gemini-3.5-flash-lite","gemini-3.8-flash"]))
-    body=json.dumps({"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0}}).encode()
-    last_error=""
-    for name in candidates:
-        url="https://generativelanguage.googleapis.com/v1beta/models/"+name+":generateContent"
-        req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","x-goog-api-key":key},method="POST")
-        try:
-            with urllib.request.urlopen(req,timeout=28) as res:
-                data=json.load(res)
-            answer="".join(p.get("text","") for p in data["candidates"][0]["content"]["parts"])
-            if not answer.strip():raise RuntimeError("Gemini returned an empty answer")
-            return answer
-        except urllib.error.HTTPError as e:
-            # Don't surface the provider's raw response: it can contain account metadata.
-            last_error="Gemini "+name+" returned HTTP "+str(e.code)
-            if e.code in (400,404):continue  # Model unavailable: try next model.
-            if e.code==429:raise RuntimeError("Gemini quota/rate limit reached (HTTP 429)")
-            if e.code in (401,403):raise RuntimeError("Gemini API key or project permission rejected (HTTP "+str(e.code)+")")
-            raise RuntimeError(last_error)
-        except (TimeoutError,urllib.error.URLError) as e:
-            raise RuntimeError("Gemini network request failed: "+type(e).__name__)
-        except (IndexError,KeyError,TypeError,ValueError):
-            raise RuntimeError("Gemini response format was unexpected")
-    raise RuntimeError(last_error or "No usable Gemini model found")
+        raise RuntimeError("Invalid Gemini model name")
+    url="https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent"
+    body=json.dumps({"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"temperature":0,"maxOutputTokens":450}}).encode()
+    req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","x-goog-api-key":key},method="POST")
+    try:
+        with urllib.request.urlopen(req,timeout=12) as response:
+            data=json.load(response)
+        result="".join(part.get("text","") for part in data["candidates"][0]["content"]["parts"])
+        if not result.strip():raise RuntimeError("Gemini returned an empty answer")
+        return result
+    except urllib.error.HTTPError as exc:
+        errors={400:"Unsupported model or request",401:"Invalid Gemini key",403:"Gemini project lacks permission",404:"Selected Gemini model unavailable",429:"Gemini quota exhausted"}
+        raise RuntimeError("Gemini HTTP "+str(exc.code)+": "+errors.get(exc.code,"Provider error"))
+    except (TimeoutError,urllib.error.URLError):
+        raise RuntimeError("Gemini timed out or cannot be reached (12-second limit)")
+    except (IndexError,KeyError,TypeError,ValueError):
+        raise RuntimeError("Gemini response was not usable")
 
 @app.get("/api/gemini/status")
 def ai_status(user=Depends(current)):
