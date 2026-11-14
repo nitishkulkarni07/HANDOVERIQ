@@ -18,6 +18,10 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 # WARNING: Vercel's /tmp SQLite store is ephemeral; no persistent uploads in this mode.
 if os.getenv("HANDOVERIQ_DEMO_MODE") == "1":
     DATABASE_URL = ""
+elif DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    # API publishable keys are NOT PostgreSQL connection strings. Never send them to psycopg.
+    # Keep the demonstration page available; uploaded data here is not persistent.
+    DATABASE_URL = ""
 
 class PostgresDatabase:
     def __init__(self, connection):
