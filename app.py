@@ -14,6 +14,10 @@ if os.getenv("VERCEL") and not os.getenv("DEMO_PASSWORD"):
 
 # Supabase Postgres in production; local SQLite remains useful for development.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+# Explicit emergency demo mode restores the UI when hosted database credentials fail.
+# WARNING: Vercel's /tmp SQLite store is ephemeral; no persistent uploads in this mode.
+if os.getenv("HANDOVERIQ_DEMO_MODE") == "1":
+    DATABASE_URL = ""
 
 class PostgresDatabase:
     def __init__(self, connection):
