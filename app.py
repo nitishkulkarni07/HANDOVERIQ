@@ -14,8 +14,6 @@ if os.getenv("VERCEL") and not os.getenv("DEMO_PASSWORD"):
 
 # Supabase Postgres in production; local SQLite remains useful for development.
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-if os.getenv("VERCEL") and not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL is required on Vercel. Configure Supabase's transaction-pooler URI.")
 
 class PostgresDatabase:
     def __init__(self, connection):
