@@ -47,7 +47,11 @@ def database():
                 DATABASE_URL,
                 count=1,
             )
-        connection = psycopg.connect(connection_url, row_factory=dict_row, connect_timeout=5, prepare_threshold=None)
+        # Explicit libpq user override; works even when URL uses nonstandard brackets.
+        kwargs = {"row_factory": dict_row, "connect_timeout": 5, "prepare_threshold": None}
+        if ".pooler.supabase.com" in DATABASE_URL:
+            kwargs["user"] = "postgres.rhgqgusbpjgqnsgvpfuq"
+        connection = psycopg.connect(connection_url, **kwargs)
         db = PostgresDatabase(connection)
         try:
             connection.execute("SET search_path TO handoveriq")
