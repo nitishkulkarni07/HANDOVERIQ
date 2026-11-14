@@ -1,4 +1,4 @@
-import os,io,re,json,time,hashlib,hmac,secrets,sqlite3,urllib.request,urllib.error
+import os,io,re,json,time,hashlib,hmac,secrets,sqlite3,urllib.request,urllib.error,base64
 from pathlib import Path
 from contextlib import contextmanager
 from fastapi import FastAPI,UploadFile,File,Form,Header,Depends,HTTPException
@@ -53,13 +53,38 @@ class Review(BaseModel):
     verdict:str
     correction:str=""
 
+# Signed, expiring demo sessions survive Vercel's independent serverless instances.
+# AUTH_SECRET MUST stay identical across deployments and must never enter Git.
+def _auth_secret():
+    value=os.getenv("AUTH_SECRET","")
+    if not value and not os.getenv("VERCEL"):
+        value=os.getenv("DEMO_PASSWORD","local-development-only")
+    if not value:raise RuntimeError("AUTH_SECRET is required for Vercel")
+    return value.encode("utf-8")
+
+def _b64(data:bytes):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+def make_token(user):
+    data={"id":user["id"],"username":user["username"],"role":user["role"],"exp":int(time.time())+8*3600}
+    payload=_b64(json.dumps(data,separators=(",",":"),sort_keys=True).encode())
+    signature=_b64(hmac.new(_auth_secret(),payload.encode(),hashlib.sha256).digest())
+    return payload+"."+signature
+
 def current(authorization:str|None=Header(None)):
-    if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401,"Sign in first")
-    token=hashlib.sha256(authorization[7:].encode()).hexdigest()
-    with database() as db:
-        user=db.execute("SELECT users.id,users.username,users.role FROM sessions JOIN users ON users.id=sessions.uid WHERE sessions.token=?",(token,)).fetchone()
-    if not user:raise HTTPException(401,"Session expired")
-    return dict(user)
+    if not authorization or not authorization.startswith("Bearer "):raise HTTPException(401,"Sign in first")
+    try:
+        payload,signature=authorization[7:].split(".",1)
+        expected=_b64(hmac.new(_auth_secret(),payload.encode(),hashlib.sha256).digest())
+        if not hmac.compare_digest(signature,expected):raise ValueError("Invalid signature")
+        user=json.loads(base64.urlsafe_b64decode(payload+"="*(-len(payload)%4)))
+        if not isinstance(user,dict) or int(user.get("exp",0))<int(time.time()):raise ValueError("Expired")
+        if user.get("role") not in ("lead","reviewer","incoming"):raise ValueError("Invalid role")
+        if user.get("username") not in ("lead","reviewer","newmember"):raise ValueError("Invalid username")
+        if not isinstance(user.get("id"),int):raise ValueError("Invalid user id")
+        return {"id":user["id"],"username":user["username"],"role":user["role"]}
+    except (ValueError,TypeError,KeyError,json.JSONDecodeError):
+        raise HTTPException(401,"Session expired. Please sign in again")
 
 def editor(u):
     if u["role"] not in ("lead","reviewer"):raise HTTPException(403,"Lead or reviewer required")
@@ -80,8 +105,7 @@ def login(c:Credentials):
         if not user:raise HTTPException(401,"Invalid credentials")
         s=user["hash"].split(":")[0]
         if not hmac.compare_digest(user["hash"],hashpass(c.password,s)):raise HTTPException(401,"Invalid credentials")
-        token=secrets.token_urlsafe(32)
-        db.execute("INSERT INTO sessions VALUES(?,?)",(hashlib.sha256(token.encode()).hexdigest(),user["id"]))
+        token=make_token(user)
     return {"token":token,"user":{"id":user["id"],"username":user["username"],"role":user["role"]}}
 
 @app.get("/api/me")
