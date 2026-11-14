@@ -37,7 +37,15 @@ def database():
     if DATABASE_URL:
         import psycopg
         from psycopg.rows import dict_row
-        connection = psycopg.connect(DATABASE_URL, row_factory=dict_row, connect_timeout=8, prepare_threshold=None)
+        # The Supabase shared pooler expects postgres.<project-ref> instead of postgres.
+        # Correct the username in memory, without logging or modifying the stored password.
+        from urllib.parse import urlsplit, urlunsplit
+        parsed = urlsplit(DATABASE_URL)
+        connection_url = DATABASE_URL
+        if parsed.hostname and parsed.hostname.endswith(".pooler.supabase.com") and parsed.username == "postgres":
+            corrected_netloc = parsed.netloc.replace("postgres:", "postgres.rhgqgusbpjgqnsgvpfuq:", 1)
+            connection_url = urlunsplit((parsed.scheme, corrected_netloc, parsed.path, parsed.query, parsed.fragment))
+        connection = psycopg.connect(connection_url, row_factory=dict_row, connect_timeout=5, prepare_threshold=None)
         db = PostgresDatabase(connection)
         try:
             connection.execute("SET search_path TO handoveriq")
