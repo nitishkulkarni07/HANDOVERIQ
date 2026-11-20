@@ -30,6 +30,8 @@ def test_main_journey(tmp_path, monkeypatch):
         upload=client.post("/api/sources",headers=lead,files={"file":("notes.txt",doc,"text/plain")},data={"visibility":"all"})
         assert upload.status_code == 200, upload.text
         sid=upload.json()["id"]
+        repeated=client.post("/api/sources",headers=lead,files={"file":("notes.txt",doc,"text/plain")},data={"visibility":"all"})
+        assert repeated.status_code==200 and repeated.json()["duplicate"] and repeated.json()["id"]==sid
         assert len(client.get("/api/sources",headers=newcomer).json()) == 1
         assert client.get("/api/sources/"+str(sid),headers=newcomer).status_code == 200
         score=client.get("/api/continuity/score",headers=lead)
@@ -49,11 +51,14 @@ def test_main_journey(tmp_path, monkeypatch):
         assert details["claims"]
         assert client.post("/api/handovers/"+str(hid)+"/approve",headers=reviewer).status_code==400
         for claim in details["claims"]:
-            response=client.post("/api/handovers/"+str(hid)+"/review",headers=reviewer,json={"claim_id":claim["claim_id"],"verdict":"accept"})
+            verdict="reject" if claim["claim_id"]==0 else "accept"
+            response=client.post("/api/handovers/"+str(hid)+"/review",headers=reviewer,json={"claim_id":claim["claim_id"],"verdict":verdict})
             assert response.status_code==200,response.text
         assert client.post("/api/handovers/"+str(hid)+"/approve",headers=reviewer).status_code==200
         assert client.post("/api/handovers/"+str(hid)+"/approve",headers=reviewer).status_code==409
         assert client.get("/api/handovers/"+str(hid),headers=newcomer).status_code==200
+        visible=client.get("/api/handovers/"+str(hid),headers=newcomer).json()
+        assert len(visible["claims"])==len(details["claims"])-1
         assert client.post("/api/handovers/"+str(hid)+"/acknowledge",headers=newcomer).status_code==400
         for day in range(1,8):
             r=client.post("/api/handovers/"+str(hid)+"/progress",headers=newcomer,json={"day":day,"completed":True})
