@@ -174,6 +174,7 @@ def login(c:Credentials):
     with database() as db:
         user=db.execute("SELECT * FROM users WHERE username=?",(c.username,)).fetchone()
         if not user:raise HTTPException(401,"Invalid credentials")
+        if ":" not in user["hash"]:raise HTTPException(401,"Password login is unavailable for judge accounts")
         s=user["hash"].split(":")[0]
         if not hmac.compare_digest(user["hash"],hashpass(c.password,s)):raise HTTPException(401,"Invalid credentials")
         token=make_token(user)
@@ -231,7 +232,10 @@ def me(user=Depends(current)):return user
 
 @app.get("/api/sources")
 def sources(user=Depends(current)):
-    return [{"id":s["id"],"filename":s["name"],"visibility":s["visibility"],"length":len(s["body"])} for s in allowed_sources(user)]
+    # List only metadata: fetching every full document on each navigation causes lag.
+    with database() as db:
+        rows=db.execute("SELECT id,name,visibility,LENGTH(body) AS length FROM sources ORDER BY id DESC").fetchall()
+    return [{"id":s["id"],"filename":s["name"],"visibility":s["visibility"],"length":s["length"]} for s in rows if cansee(s,user)]
 
 @app.get("/api/sources/{sid}")
 def source(sid:int,user=Depends(current)):
