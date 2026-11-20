@@ -10,12 +10,15 @@ def test_main_journey(tmp_path, monkeypatch):
     monkeypatch.delenv("VERCEL", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OLLAMA_URL", raising=False)
+    monkeypatch.setenv("JUDGE_DEMO_ENABLED","1")
     sys.modules.pop("app", None)
     app = importlib.import_module("app")
     from fastapi.testclient import TestClient
     with TestClient(app.app) as client:
         assert client.get("/").status_code == 200
         assert client.get("/api/health").json()["database"] == "sqlite"
+        assert client.get("/api/judge/config").json()["enabled"] is True
+        assert client.post("/api/chat",json={"question":"What happened?","source_id":1}).status_code==401
         assert client.get("/api/continuity/score").status_code == 401
         assert client.post("/api/login", json={"username":"lead","password":"wrong"}).status_code == 401
         def auth(role):
@@ -24,7 +27,8 @@ def test_main_journey(tmp_path, monkeypatch):
             return {"Authorization":"Bearer "+response.json()["token"]}
         lead, reviewer, newcomer = auth("lead"), auth("reviewer"), auth("newmember")
         assert client.get("/api/sources",headers=lead).json() == []
-        assert client.post("/api/chat",headers=lead,json={"question":"What decisions?"}).json()["insufficient_evidence"]
+        assert client.post("/api/chat",headers=lead,json={"question":"What decisions?","source_id":1}).status_code==404
+        assert client.post("/api/chat",headers=lead,json={"question":"What decisions?"}).status_code==400
         assert client.post("/api/sources",headers=lead,files={"file":("virus.exe",b"bad")}).status_code == 400
         doc = b"2026-11-20 Decided to use Supabase because reliable storage is required.\nTODO: Assigned to lead to implement search indexing.\nRisk: API outage may block semantic search.\n"
         upload=client.post("/api/sources",headers=lead,files={"file":("notes.txt",doc,"text/plain")},data={"visibility":"all"})
@@ -38,11 +42,20 @@ def test_main_journey(tmp_path, monkeypatch):
         assert score.status_code==200 and 0 <= score.json()["score"] <= 100
         decisions=client.get("/api/decisions",headers=lead)
         assert decisions.status_code==200 and decisions.json()["count"]>=1
-        result=client.post("/api/chat",headers=lead,json={"question":"What was decided about Supabase?","engine":"search"})
+        result=client.post("/api/chat",headers=lead,json={"question":"What was decided about Supabase?","engine":"search","source_id":sid})
         assert result.status_code==200 and result.json()["citations"]
         restricted=client.post("/api/sources",headers=lead,files={"file":("secret.txt",b"Decision: use internal process because secret.","text/plain")},data={"visibility":"restricted"})
         assert restricted.status_code==200
-        assert len(client.get("/api/sources",headers=newcomer).json())==1
+        # A question scoped to the first file cannot cite another uploaded file.
+        second=client.post("/api/sources",headers=lead,files={"file":("other.txt",b"Quantum banana rockets were discussed and selected.", "text/plain")},data={"visibility":"all"})
+        assert second.status_code==200
+        r=client.post("/api/chat",headers=lead,json={"question":"What about quantum banana rockets?","engine":"search","source_id":sid})
+        assert r.status_code==200 and r.json()["insufficient_evidence"]
+        r=client.post("/api/chat",headers=lead,json={"question":"What about quantum banana rockets?","engine":"search","source_id":second.json()["id"]})
+        assert r.status_code==200 and r.json()["citations"]
+        assert all(c["source_id"]==second.json()["id"] for c in r.json()["citations"])
+        assert client.post("/api/chat",headers=newcomer,json={"question":"What secret?","source_id":restricted.json()["id"]}).status_code==404
+        assert len(client.get("/api/sources",headers=newcomer).json())==2
         create=client.post("/api/handovers",headers=lead,json={"recipient_role":"incoming"})
         assert create.status_code==200,create.text
         hid=create.json()["id"]
@@ -70,3 +83,13 @@ def test_main_journey(tmp_path, monkeypatch):
         assert client.post("/api/handovers/"+str(hid)+"/progress",headers=newcomer,json={"day":1,"completed":False}).status_code==200
         assert client.get("/api/handovers/"+str(hid),headers=newcomer).json()["progress_percent"]==86
         assert client.get("/api/sources/"+str(sid),headers=newcomer).status_code==200
+        # Public judge accounts are isolated from the private source workspace.
+        demo=client.post("/api/judge/login",json={"username":"lead"})
+        assert demo.status_code==200,demo.text
+        judge={"Authorization":"Bearer "+demo.json()["token"]}
+        assert client.get("/api/me",headers=judge).json()["demo"] is True
+        assert client.get("/api/sources",headers=judge).json()==[]
+        sample=client.post("/api/sources",headers=judge,files={"file":("judge.txt",b"Decision: use demo workspace because judge data must stay separate.", "text/plain")},data={"visibility":"all"})
+        assert sample.status_code==200,sample.text
+        assert client.get("/api/sources",headers=judge).json()[0]["filename"]=="judge.txt"
+        assert any(x["filename"]=="notes.txt" for x in client.get("/api/sources",headers=lead).json())
