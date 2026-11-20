@@ -616,3 +616,87 @@ def export(hid:int,user=Depends(current)):
     lines.append("\n## Open questions")
     lines.extend("- "+g["question"] for g in h["gaps"])
     return PlainTextResponse("\n".join(lines),media_type="text/markdown",headers={"Content-Disposition":"attachment; filename=handover.md"})
+
+
+@app.get("/api/_round3_smoke_temp")
+def _round3_smoke_temp():
+    """Temporary synthetic QA route; removed after verification."""
+    if not judge_enabled():raise HTTPException(404)
+    import asyncio
+    steps=[]
+    cleanup_sources=[]
+    cleanup_handovers=[]
+    provider={"gemini":"not tested","ollama":"not configured","embeddings":"not tested"}
+    marker=_judge_scope.set(True)
+    try:
+        with database() as db:
+            rows=[dict(x) for x in db.execute("SELECT * FROM users ORDER BY id")]
+        actors={x["username"]:{"id":x["id"],"username":x["username"],"role":x["role"],"demo":True} for x in rows}
+        lead=actors["lead"];reviewer=actors["reviewer"];newmember=actors["newmember"]
+        token=make_token(lead,demo=True)
+        assert current("Bearer "+token)["demo"] is True
+        steps.append("signed judge token works")
+        marker_name="R3-SMOKE-"+secrets.token_hex(5)
+        alpha=b"2026-11-20 Decision: Selected SolarGrid because the cost is lower.\nTODO: Assigned to lead to finalize the dashboard.\nRisk: API timeout may delay tasks.\n"
+        beta=b"2026-11-20 Decision: Selected HyperLattice because audit logs are critical.\nTODO: Assigned to reviewer to validate access rules.\n"
+        for file_name,raw in ((marker_name+"-solar.txt",alpha),(marker_name+"-hyper.txt",beta)):
+            f=UploadFile(file=io.BytesIO(raw),filename=file_name)
+            result=asyncio.run(add_source(file=f,visibility="all",user=lead))
+            cleanup_sources.append(result["id"])
+        ids=list(cleanup_sources)
+        # Repeated upload returns the exact same document id
+        repeated=asyncio.run(add_source(file=UploadFile(file=io.BytesIO(alpha),filename=marker_name+"-solar.txt"),visibility="all",user=lead))
+        assert repeated["id"]==ids[0] and repeated["duplicate"]
+        steps.append("uploads persist and duplicate upload is idempotent")
+        assert source(ids[0],user=newmember)["filename"].endswith("-solar.txt")
+        solar=chat(Ask(question="Why was SolarGrid selected?",engine="search",source_id=ids[0]),user=lead)
+        hyper=chat(Ask(question="Why was HyperLattice selected?",engine="search",source_id=ids[1]),user=lead)
+        assert solar["citations"] and hyper["citations"]
+        assert all(c["source_id"]==ids[0] for c in solar["citations"])
+        assert all(c["source_id"]==ids[1] for c in hyper["citations"])
+        steps.append("AI searches only the selected file and citations stay isolated")
+        try:
+            extra=chat(Ask(question="Why was SolarGrid selected?",engine="gemini",source_id=ids[0]),user=lead)
+            assert extra["mode"]=="gemini"
+            provider["gemini"]="working"
+        except Exception as err:provider["gemini"]="failed: "+str(err)[:125]
+        # Validate database vector syntax without relying on external embeddings.
+        try:
+            vec="["+",".join(["1"]+["0"]*767)+"]"
+            with database() as db:
+                db.execute("INSERT INTO source_embeddings(source_id,line_number,excerpt,embedding) VALUES(?,?,?,?::extensions.vector)",(ids[0],1,"SolarGrid cost",vec))
+                near=db.execute("SELECT line_number FROM source_embeddings WHERE source_id=? ORDER BY embedding <=> ?::extensions.vector LIMIT 1",(ids[0],vec)).fetchone()
+            assert near["line_number"]==1
+            provider["embeddings"]="pgvector persistence and cosine lookup working; cloud embedding generation not proven"
+        except Exception as err:provider["embeddings"]="failed: "+str(err)[:125]
+        steps.append("pgvector query attempted")
+        h=create_handover(Build(recipient_role="incoming"),user=lead)
+        hid=h["id"];cleanup_handovers.append(hid)
+        draft=handover(hid,user=reviewer)
+        assert draft["claims"]
+        for item in draft["claims"]:
+            review(hid,Review(claim_id=item["claim_id"],verdict="accept"),user=reviewer)
+        approve(hid,user=reviewer)
+        steps.append("snapshot, claim reviews and approval work")
+        approved=handover(hid,user=newmember)
+        assert approved["status"]=="approved" and len(approved["claims"])>0
+        for day in range(1,8):
+            update_progress(hid,ProgressUpdate(day=day,completed=True),user=newmember)
+        assert handover(hid,user=newmember)["progress_percent"]==100
+        acknowledge(hid,user=newmember)
+        acknowledge(hid,user=newmember)
+        steps.append("seven-day progress persists and duplicate acknowledgement works")
+        return {"ok":True,"steps":steps,"providers":provider,"isolated_workspace":True}
+    except Exception as err:
+        return {"ok":False,"steps":steps,"error":str(err)[:220],"providers":provider}
+    finally:
+        try:
+            with database() as db:
+                for hid in cleanup_handovers:
+                    db.execute("DELETE FROM receipts WHERE hid=?",(hid,))
+                    db.execute("DELETE FROM onboarding_progress WHERE hid=?",(hid,))
+                    db.execute("DELETE FROM handovers WHERE id=?",(hid,))
+                for sid in cleanup_sources:
+                    db.execute("DELETE FROM source_embeddings WHERE source_id=?",(sid,))
+                    db.execute("DELETE FROM sources WHERE id=?",(sid,))
+        finally:_judge_scope.reset(marker)
