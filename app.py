@@ -277,6 +277,9 @@ async def add_source(file:UploadFile=File(...),visibility:str=Form("all"),user=D
 def delete_source(sid:int,user=Depends(current)):
     editor(user)
     with database() as db:
+        source=db.execute("SELECT name FROM sources WHERE id=?",(sid,)).fetchone()
+        if source and user.get("demo") and source["name"]=="SAMPLE_Campus_Shuttle_Project.txt":
+            raise HTTPException(403,"The shared judge sample cannot be deleted")
         if DATABASE_URL:db.execute("DELETE FROM source_embeddings WHERE source_id=?",(sid,))
         db.execute("DELETE FROM sources WHERE id=?",(sid,))
     return {"ok":True}
