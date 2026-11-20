@@ -205,9 +205,12 @@ async def add_source(file:UploadFile=File(...),visibility:str=Form("all"),user=D
     except Exception as e:raise HTTPException(400,"Cannot parse document: "+str(e)[:100])
     if not body.strip():raise HTTPException(400,"Document contains no extractable text")
     with database() as db:
-        c=db.execute("INSERT INTO sources(name,body,visibility) VALUES(?,?,?)",(name,body[:150000],visibility))
-        sid=c.lastrowid
-    return {"id":sid,"filename":name,"characters":len(body),"storage_warning":"Temporary SQLite on Vercel: this document can disappear between requests. Connect a persistent database for reliable handovers." if os.getenv("VERCEL") and not DATABASE_URL else None}
+        existing=db.execute("SELECT id FROM sources WHERE name=? AND body=? AND visibility=? ORDER BY id LIMIT 1",(name,body[:150000],visibility)).fetchone()
+        if existing:sid=existing["id"]
+        else:
+            c=db.execute("INSERT INTO sources(name,body,visibility) VALUES(?,?,?)",(name,body[:150000],visibility))
+            sid=c.lastrowid
+    return {"id":sid,"duplicate":bool(existing),"filename":name,"characters":len(body),"storage_warning":"Temporary SQLite on Vercel: this document can disappear between requests. Connect a persistent database for reliable handovers." if os.getenv("VERCEL") and not DATABASE_URL else None}
 
 @app.delete("/api/sources/{sid}")
 def delete_source(sid:int,user=Depends(current)):
@@ -484,6 +487,7 @@ def handover(hid:int,user=Depends(current)):
         rec=db.execute("SELECT 1 FROM receipts WHERE hid=? AND uid=?",(hid,user["id"])).fetchone()
     claims=json.loads(row["claims"]);reviews=json.loads(row["reviews"])
     for i,c in enumerate(claims):c["claim_id"]=i;c["review"]=reviews.get(str(i),{})
+    if user["role"]=="incoming":claims=[c for c in claims if c["review"].get("verdict") in ("accept","correct")]
     with database() as db:
         completed={x["day"] for x in db.execute("SELECT day FROM onboarding_progress WHERE hid=? AND uid=?",(hid,user["id"]))}
     approved_claims=[c for c in claims if c["review"].get("verdict") in ("accept","correct")]
