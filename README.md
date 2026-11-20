@@ -70,7 +70,7 @@ Local SQLite supports upload, chat lexical retrieval, approvals and onboarding p
 
 ## Main journey for judges
 
-1. Log in as **lead** and upload a sample TXT/PDF containing decision, task, blocker, risk and owner information.
+1. Log in as **lead** and upload `examples/synthetic_project_notes.txt` (decision, task, blocker, risk and owner information). Uploading the same document twice returns the existing record.
 2. Open the document; confirm the numbered evidence lines. In PostgreSQL, use **Build semantic index** to index up to four sections per call and repeat until complete.
 3. Open **AI Assistant**, ask about an uploaded decision, review the cited evidence. Try **Ollama only** when a server is configured; use auto otherwise.
 4. Open **Decision Timeline** to see decisions, citations and missing-rationale flags.
