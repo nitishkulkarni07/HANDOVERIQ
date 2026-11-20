@@ -1,0 +1,18 @@
+# Synthetic project handover: Campus Shuttle App
+Project: Campus Shuttle Appointment and Scheduling System
+Note: This fictional dataset is provided for testing. No real identities, credentials or confidential information.
+
+2026-11-10 Decision: We decided to use Supabase PostgreSQL because ride reservations must persist after a server restart.
+2026-11-11 Decision: We selected Python FastAPI because typed endpoints simplify integration tests.
+2026-11-12 Decision: We chose a 15-minute booking window, but the reason has not been documented.
+2026-11-13 Action item: Assigned to the backend lead to implement duplicate reservation protection before release.
+2026-11-14 TODO: Assigned to frontend developer to show clear errors when no shuttle slots are available.
+2026-11-15 Risk: Poor mobile internet may delay confirmation of submitted ride requests.
+2026-11-16 Blocker: The campus map API key is unavailable; route previews are blocked.
+2026-11-17 Dependency: Shuttle route visualizations depend on receiving the campus map integration credentials.
+2026-11-18 Next step: Reviewer must verify the slot-booking concurrency test before approval.
+
+Open questions:
+Who owns the map API request?
+What is the fallback when connectivity is lost?
+Why was a 15-minute booking window selected?
