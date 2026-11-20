@@ -452,7 +452,7 @@ def handover(hid:int,user=Depends(current)):
     decisions=[c for c in approved_claims if c["category"]=="decision"]
     blockers=[c for c in approved_claims if c["category"] in ("blocker","risk")]
     actions=[c for c in approved_claims if c["category"]=="action"]
-    days=["Read the verified project state ("+str(len(approved_claims))+" claims)","Inspect "+str(len(decisions))+" evidenced decisions and their rationale","Review "+str(len(blockers))+" blockers and risks","Resolve "+str(len(json.loads(row["gaps"]))+" open knowledge gaps","Confirm owners for "+str(len(actions))+" action items","Execute and validate the highest-priority next action","Document learning and acknowledge the handover"]
+    days=["Read the verified project state ("+str(len(approved_claims))+" claims)","Inspect "+str(len(decisions))+" evidenced decisions and their rationale","Review "+str(len(blockers))+" blockers and risks","Resolve "+str(len(json.loads(row["gaps"])))+" open knowledge gaps","Confirm owners for "+str(len(actions))+" action items","Execute and validate the highest-priority next action","Document learning and acknowledge the handover"]
     return {"id":hid,"recipient_role":row["role"],"status":row["status"],"claims":claims,"gaps":json.loads(row["gaps"]),"onboarding":[{"day":"Day "+str(i+1),"number":i+1,"description":day,"completed":i+1 in completed} for i,day in enumerate(days)],"progress_percent":round(100*len(completed)/7),"acknowledged":bool(rec)}
 
 @app.post("/api/handovers/{hid}/review")
