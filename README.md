@@ -68,11 +68,35 @@ For Supabase shared pooler, `DATABASE_URL` must be the **PostgreSQL** connection
 
 Local SQLite supports upload, chat lexical retrieval, approvals and onboarding progress. Semantic indexing requires PostgreSQL with pgvector, and an embedding provider.
 
+## Instant judge access and data isolation
+
+The production login page includes three **passwordless one-click judge buttons**: **Enter as Lead**, **Enter as Reviewer**, and **Enter as New Member**. These buttons are controlled by the `JUDGE_DEMO_ENABLED=1` server environment variable.
+
+**Security:** The judge accounts operate exclusively in the `handoveriq_judges` PostgreSQL schema. The original password-protected project accounts use the private `handoveriq` schema. Public judges cannot access the private project's documents, including its restricted sources. Judge records are **shared publicly among demo participants**, so upload only synthetic/permissioned content. The demo schema contains a sample document, `SAMPLE_Campus_Shuttle_Project.txt`, and a pre-approved example handover.
+
+For a private deployment, set `JUDGE_DEMO_ENABLED=0` and redeploy. The normal password login remains available independently.
+
+### Document-specific AI questions
+
+Open **Documents → Ask about this file**, or go to **AI Assistant** and explicitly select a document from the file picker. The request sends `source_id` and the server refuses missing/unauthorised identifiers. Retrieved lexical passages, pgvector matches, citations and Gemini/Ollama context are restricted to the **single selected document**. The chat history is also separated by file in the browser.
+
+### Provider setup
+
+The latest production verification confirmed **Gemini answering and Gemini embedding generation**, and **pgvector storage and similarity matching**. **Ollama is optional** and is **not configured on the public deployment**. To connect it, provide a reachable authenticated Ollama host and `OLLAMA_API_KEY` in Vercel; an Ollama server at `localhost` on a laptop is not reachable from Vercel.
+
+### Performance and reliability
+
+Document list queries return metadata rather than full source contents. Navigation reuses recent lists; writes force immediate refresh. AI chat skips unnecessary cloud embedding lookups when lexical passages already support the answer. Document questions have a single-file scope, duplicate uploads are idempotent, and clients show bounded-request errors instead of waiting indefinitely.
+
+### Verified production synthetic test (20 Nov 2026)
+
+A temporary internal test exercised the **isolated live judge database** and removed its synthetic test records after execution. Results: signed judge login **passed**, upload and duplicate handling **passed**, two-file citation isolation **passed**, Gemini answer generation **passed**, 768-dimensional Gemini embeddings and pgvector similarity **passed**, review and approval **passed**, seven-day completion and duplicate acknowledgment **passed**. These checks validate the application workflow, not AI factual accuracy on arbitrary documents. Hosted Ollama inference remains **unverified until a server or cloud key is configured**.
+
 ## Main journey for judges
 
-1. Log in as **lead** and upload `examples/synthetic_project_notes.txt` (decision, task, blocker, risk and owner information). Uploading the same document twice returns the existing record.
+1. Use **Enter as Lead** on the live website, or use private credentials locally. The public judge workspace already has a sample; optionally upload `examples/synthetic_project_notes.txt` (decision, task, blocker, risk and owner information). Uploading the same document twice returns the existing record.
 2. Open the document; confirm the numbered evidence lines. In PostgreSQL, use **Build semantic index** to index up to four sections per call and repeat until complete.
-3. Open **AI Assistant**, ask about an uploaded decision, review the cited evidence. Try **Ollama only** when a server is configured; use auto otherwise.
+3. Open **AI Assistant**, select exactly one document, ask about a decision and inspect the cited evidence. Try **Ollama only** when a server is configured; use auto otherwise.
 4. Open **Decision Timeline** to see decisions, citations and missing-rationale flags.
 5. Create a new handover for incoming members, accept/correct/reject **each** claim, then approve.
 6. Sign out; sign in as **newmember**, inspect the approved handover and check off the seven onboarding tasks. Acknowledge receipt after completion.
