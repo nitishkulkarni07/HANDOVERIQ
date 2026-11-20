@@ -635,6 +635,7 @@ def _round3_smoke_temp():
         lead=actors["lead"];reviewer=actors["reviewer"];newmember=actors["newmember"]
         token=make_token(lead,demo=True)
         assert current("Bearer "+token)["demo"] is True
+        assert judge_login(JudgeLogin(username="lead"))["user"]["demo"] is True
         steps.append("signed judge token works")
         marker_name="R3-SMOKE-"+secrets.token_hex(5)
         alpha=b"2026-11-20 Decision: Selected SolarGrid because the cost is lower.\nTODO: Assigned to lead to finalize the dashboard.\nRisk: API timeout may delay tasks.\n"
@@ -667,7 +668,18 @@ def _round3_smoke_temp():
                 db.execute("INSERT INTO source_embeddings(source_id,line_number,excerpt,embedding) VALUES(?,?,?,?::extensions.vector)",(ids[0],1,"SolarGrid cost",vec))
                 near=db.execute("SELECT line_number FROM source_embeddings WHERE source_id=? ORDER BY embedding <=> ?::extensions.vector LIMIT 1",(ids[0],vec)).fetchone()
             assert near["line_number"]==1
-            provider["embeddings"]="pgvector persistence and cosine lookup working; cloud embedding generation not proven"
+            provider["embeddings"]="pgvector persistence and cosine lookup working"
+            try:
+                query="SolarGrid is less expensive"
+                generated=semantic_embedding(query)
+                assert len(generated)==768
+                encoded="["+",".join(str(round(v,7)) for v in generated)+"]"
+                with database() as db:
+                    db.execute("INSERT INTO source_embeddings(source_id,line_number,excerpt,embedding) VALUES(?,?,?,?::extensions.vector) ON CONFLICT(source_id,line_number) DO UPDATE SET excerpt=excluded.excerpt,embedding=excluded.embedding",(ids[0],2,query,encoded))
+                evidence=semantic_passages(query,[{"id":ids[0],"name":marker_name+"-solar.txt"}])
+                assert evidence and all(c["source_id"]==ids[0] for c in evidence)
+                provider["embeddings"]="Gemini embeddings, pgvector storage and scoped similarity search working"
+            except Exception as exc:provider["embeddings"]+="; cloud embedding step failed: "+str(exc)[:100]
         except Exception as err:provider["embeddings"]="failed: "+str(err)[:125]
         steps.append("pgvector query attempted")
         h=create_handover(Build(recipient_role="incoming"),user=lead)
