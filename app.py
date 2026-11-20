@@ -68,7 +68,7 @@ def database():
         connection = psycopg.connect(connection_url, **kwargs)
         db = PostgresDatabase(connection)
         try:
-            connection.execute("SET search_path TO "+("handoveriq_judges" if _judge_scope.get() else "handoveriq"))
+            connection.execute("SET search_path TO "+("handoveriq_judges" if _judge_scope.get() else "handoveriq")+", extensions")
             yield db
             db.commit()
         except Exception:
