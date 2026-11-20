@@ -15,6 +15,7 @@ Evidence-grounded project handovers for teams with role changes: **Reconstruct �
 | Document ingestion | PDF, DOCX, TXT, MD; 2 MB and 30-page PDF limit; source lines and visibility flags | Scanned PDF OCR is **not** supported |
 | AI document assistant | Permission-filtered evidence with citations, Ollama or Gemini, search fallback | Model output can be wrong; always verify citations |
 | Semantic retrieval | pgvector(768) index with Gemini text embeddings (or matching-dimension Ollama embeddings) | Use **Build semantic index** per document; up to four sections per click; lexical fallback otherwise |
+| Continuity Readiness Index | Evidence, rationale, ownership, gaps and review coverage scored transparently out of 100 | Heuristic indication, not an accuracy or prediction score |
 | Decision DNA / Gap Radar | Timeline of detected decisions, source references, missing-rationale flags; gap questions | Heuristic/rule-based, not verified reasoning about alternatives |
 | Review / approval | Drafts, accept/reject/correct per claim, publish, Markdown export | Approval requires reviewing every claim |
 | Onboarding | Seven role-aware steps with persisted per-user completion and acknowledgement | Plan contents are generated from categories, not personalized LLM coaching |
@@ -90,7 +91,7 @@ The automated SQLite journey covers sign-in errors, empty states, upload/refresh
 
 Browser HTML/CSS/JavaScript → FastAPI REST endpoints → PostgreSQL via psycopg (or SQLite locally).
 Authorized uploads → extraction (pypdf/python-docx) → source lines → rule-based tagged claims and gaps → reviewer approval → role-specific handover → personal onboarding progress.
-Chat retrieves relevant source lines by lexical matching and, if indexed, pgvector cosine similarity. Ollama `/api/chat` or Gemini `generateContent` produces an answer grounded in provided evidence. Failure falls back to cited excerpts in auto mode.
+The dashboard also displays an evidence-based Continuity Readiness Index. Chat retrieves relevant source lines by lexical matching and, if indexed, pgvector cosine similarity. Ollama `/api/chat` or Gemini `generateContent` produces an answer grounded in provided evidence. Failure falls back to cited excerpts in auto mode.
 
 ## Round 3 commitments / disclosure
 
