@@ -311,7 +311,7 @@ def chunk_source(s):
     for n,line in enumerate(s["body"].splitlines(),1):
         v=line.strip()
         if len(v)>=24:
-            for offset in range(0,min(len(v),1800),800):chunks.append((n,v[offset:offset+800]))
+            chunks.append((n,v[:800]))
     return chunks[:80]
 
 @app.post("/api/sources/{sid}/index")
@@ -341,9 +341,12 @@ def index_document(sid:int,user=Depends(current)):
 def semantic_passages(question,items):
     if not DATABASE_URL or not os.getenv("GEMINI_API_KEY") and not os.getenv("OLLAMA_URL"):return []
     try:
-        vec=semantic_embedding(question,"RETRIEVAL_QUERY")
         ids=[s["id"] for s in items]
         if not ids:return []
+        slots=",".join("?" for _ in ids)
+        with database() as db:total=db.execute("SELECT COUNT(*) AS n FROM source_embeddings WHERE source_id IN ("+slots+")",tuple(ids)).fetchone()["n"]
+        if not total:return []
+        vec=semantic_embedding(question,"RETRIEVAL_QUERY")
         slots=",".join("?" for _ in ids)
         query="SELECT source_id,line_number,excerpt,(embedding <=> ?::extensions.vector) AS distance FROM source_embeddings WHERE source_id IN ("+slots+") ORDER BY distance LIMIT 8"
         textvec="["+(",".join(str(round(v,7)) for v in vec))+"]"
@@ -352,6 +355,41 @@ def semantic_passages(question,items):
         return [{"source_id":r["source_id"],"source_name":names[r["source_id"]],"line":r["line_number"],"excerpt":r["excerpt"],"score":round(1-float(r["distance"]),3)} for r in rows if r["source_id"] in names and float(r["distance"])<0.85]
     except Exception:
         return []
+
+
+@app.get("/api/health")
+def health():
+    """Non-sensitive infrastructure probe; does not disclose secrets."""
+    try:
+        with database() as db:db.execute("SELECT 1").fetchone()
+        return {"status":"ok","database":"postgresql" if DATABASE_URL else "sqlite","persistence":"persistent" if DATABASE_URL else "local_or_ephemeral"}
+    except Exception:
+        raise HTTPException(503,"Database unavailable")
+
+@app.get("/api/continuity/score")
+def continuity_score(user=Depends(current)):
+    docs=allowed_sources(user)
+    claims,gaps=reconstruct(docs)
+    decisions=[c for c in claims if c["category"]=="decision"]
+    actions=[c for c in claims if c["category"]=="action"]
+    rationales=sum(bool(re.search(r"\b(because|reason|due to|to avoid|so that)\b",c["text"],re.I)) for c in decisions)
+    owners=sum(bool(re.search(r"\b(owner|responsible|assigned to|assignee)\b",c["text"],re.I)) for c in actions)
+    with database() as db:
+        latest=db.execute("SELECT status,claims,reviews FROM handovers ORDER BY id DESC LIMIT 1").fetchone()
+    evidence_score=30 if claims else 0
+    decision_score=round(20*rationales/len(decisions)) if decisions else 0
+    ownership_score=round(20*owners/len(actions)) if actions else 0
+    gap_score=round(10/(1+len(gaps)/3)) if claims else 0
+    review_score=0
+    if latest:
+        hclaims=json.loads(latest["claims"]);reviews=json.loads(latest["reviews"])
+        review_score=round(20*len(reviews)/len(hclaims)) if hclaims else 0
+        if latest["status"]!="approved":review_score=min(review_score,10)
+    return {"score":evidence_score+decision_score+ownership_score+gap_score+review_score,
+            "max_score":100,"method":"Transparent heuristic, not predictive accuracy",
+            "components":{"evidence":evidence_score,"decision_rationale":decision_score,
+                          "task_ownership":ownership_score,"gap_closure":gap_score,"human_review":review_score},
+            "documents":len(docs),"claims":len(claims),"open_questions":len(gaps)}
 
 @app.get("/api/ai/status")
 def provider_status(user=Depends(current)):
