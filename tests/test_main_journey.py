@@ -15,6 +15,8 @@ def test_main_journey(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     with TestClient(app.app) as client:
         assert client.get("/").status_code == 200
+        assert client.get("/api/health").json()["database"] == "sqlite"
+        assert client.get("/api/continuity/score").status_code == 401
         assert client.post("/api/login", json={"username":"lead","password":"wrong"}).status_code == 401
         def auth(role):
             response = client.post("/api/login", json={"username":role,"password":"testing-only-password"})
@@ -30,6 +32,8 @@ def test_main_journey(tmp_path, monkeypatch):
         sid=upload.json()["id"]
         assert len(client.get("/api/sources",headers=newcomer).json()) == 1
         assert client.get("/api/sources/"+str(sid),headers=newcomer).status_code == 200
+        score=client.get("/api/continuity/score",headers=lead)
+        assert score.status_code==200 and 0 <= score.json()["score"] <= 100
         decisions=client.get("/api/decisions",headers=lead)
         assert decisions.status_code==200 and decisions.json()["count"]>=1
         result=client.post("/api/chat",headers=lead,json={"question":"What was decided about Supabase?","engine":"search"})
